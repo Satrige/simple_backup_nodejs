@@ -1,0 +1,21 @@
+{
+	"dirs" : [
+		{
+			"path" :  "./test/dirBackup/",
+			"level" : 1
+		},
+		{
+			"path" : "./test/subDir/",
+			"level" : 2
+		}
+	],
+	"sql" : {
+		"credentals" : {
+			"user" : "test",
+			"passwd" : "test"
+		},
+		"dbs" : [
+			"test"
+		]
+	}
+}
