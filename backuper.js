@@ -1,6 +1,8 @@
 var fs = require('fs'),
-	spawn = require('child_process').spawn;
+	spawn = require('child_process').spawn,
+	configs = require("./backuper.json");
 
+/*-------------------Common Functions---------------*/
 function getLastDir(name) {
 	var splittedDirs = name.split('/');
 
@@ -55,6 +57,88 @@ function makeArchive(params, callback) {
 		}
 	});
 }
+
+/*-------------------Remote Block-------------------*/
+
+function AwsBackup(awsConfigs) {
+	this.AWS = require('aws-sdk');
+	this.AWS.config.update({
+		"accessKeyId" : awsConfigs.aws_access_key_id,
+		"secretAccessKey" : awsConfigs.aws_secret_access_key
+	});
+	this.bucket = awsConfigs.bucket;
+
+	this.s3 = new this.AWS.S3();
+}
+
+AwsBackup.prototype.backupSingleFile = function(filePath, callback) {
+	var fileStream = fs.createReadStream(filePath),
+		self = this;
+
+	fileStream.on('error', function (err) {
+		if (err) {
+			console.log("Error at FileStream: " + err);
+			callback({
+				"res" : "err",
+				"descr" : err
+			});
+		}
+	});
+
+    fileStream.on('open', function() {
+        self.s3.putObject({
+            Bucket: self.bucket,
+            Key: getLastDir(filePath),
+            Body: fileStream
+        }, function(err, result) {
+            if (err) {
+            	console.log("Error while putting object to bucket: " + err);
+            	callback({
+					"res" : "err",
+					"descr" : err
+				});
+            }
+            else {
+            	callback({
+            		"res" : "ok",
+            		"descr" : result
+            	});
+            }
+        });
+    });
+};
+
+AwsBackup.prototype.backupFiles = function(filesPath, callback) {
+	var numFiles = filesPath.length,
+		self = this;
+
+	(function singleBackup(numFile) {
+		if (numFile < numFiles) {
+			self.backupSingleFile(filesPath[numFile], function(result){
+				singleBackup(++numFile);
+			});
+		}
+		else {
+			console.log("All files were sent to S3.");
+			callback({
+				"res" : "ok",
+				"descr" : "all_sent"
+			});
+		}
+	})(0);
+};
+
+function FtpBackup(ftpConfigs) {
+	console.log("Constructor of FTP.");
+	console.log("FtpBackup is under construction now.");
+}
+
+var Remotes = {
+	"aws" : AwsBackup,
+	"ftp" : FtpBackup
+};
+
+/*--------------------------------------------------*/
 
 function Dir2Backup(params) {
 	var inputDir = params.inputDir,
@@ -173,11 +257,12 @@ SqlBackup.prototype.makeDump = function(callback) {
 		console.log("stderr: " + data);
 	});
 
+	//TODO add tar compression
 	sqlDump.on('close', function(code) {
 		if (code === 0) {
 			callback({
 				"res" : "ok",
-				"outputDump" : self.outputName
+				"outputArchive" : self.outputName
 			});
 		}
 		else {
@@ -186,27 +271,25 @@ SqlBackup.prototype.makeDump = function(callback) {
 	});
 };
 
-function Backuper() {
-	this.dirs = [
-		{
-			"path" :  "./test/dirBackup/",
-			"level" : 1
-		},
-		{
-			"path" : "./test/subDir/",
-			"level" : 2
-		}
-	];
+function Backuper(configs) {
+	this.dirs = [];
+	for (var numDir in configs.dirs) {
+		this.dirs.push(configs.dirs[numDir]);
+	}
 
 	this.mySqlInfo = {
-		"dbs" : [
-			"test"
-		],
-		"user" : "test",
-		"passwd" : "test"
+		"dbs" : configs.sql.dbs,
+		"user" : configs.sql.credentals.user,
+		"passwd" : configs.sql.credentals.passwd
 	};
 
-	this.outputDir = "./test/backups/";
+	this.outputDir = configs.outputDir;
+
+	//example resulted files
+	this.archives = [
+	];
+
+	this.remoteMethods = configs.remote;
 }
 
 Backuper.prototype.sqlBackups = function(callback) {
@@ -264,29 +347,71 @@ Backuper.prototype.dirsBackup = function(callback) {
 	}
 };
 
-Backuper.prototype.startBackups = function() {
-	var numBackups = 2,
-		archives = [];
+Backuper.prototype.remoteBackup = function() {
+	var self = this,
+		keys = Object.keys(this.remoteMethods),
+		path2Archives = [];
 
-	this.dirsBackup(function(resp) {
+	for (var i in this.archives) {
+		path2Archives.push(this.outputDir + '/' + this.archives[i]);
+	}
+
+	(function curRemoteBackup(curNum) {
+		if (curNum < keys.length) {
+			var curMethod = keys[curNum];
+
+			if (self.remoteMethods[curMethod]) {
+				var curRemoteInst = new Remotes[curMethod](configs[curMethod]);
+
+				curRemoteInst.backupFiles(path2Archives, function(result) {
+					if (result.res === "ok") {
+						console.log("Remote backup with '" + curMethod + "' method is done.");
+						curRemoteBackup(++curNum);
+					}
+					else {
+						console.log("Smth went wrong: " + result.descr);
+					}
+				});
+			}
+			else {
+				curRemoteBackup(++curNum);
+			}
+		}
+		else {
+			console.log("Remote backups are over.");
+		}
+	})(0);
+}
+
+Backuper.prototype.startBackups = function(callback) {
+	var numBackups = 2,
+		self = this;
+
+	var finalFunction = function(resp) {
 		if (resp.res === "ok") {
-			archives.push(resp.outputArchive);
+			self.archives.push(resp.outputArchive);
 		}
 		if (--numBackups === 0) {
-			//console.log("dirs were last: " + JSON.stringify(archives, null, 4));
+			console.log("Archives were saved: " + JSON.stringify(self.archives, null, 4));
+			callback({
+				"res" : "ok"
+			});
 		}
+	};
+
+	this.dirsBackup(function(resp) {
+		finalFunction(resp);
 	});
 
 	this.sqlBackups(function(resp) {
-		if (resp.res === "ok") {
-			archives.push(resp.outputDump);
-		}
-		if (--numBackups === 0) {
-			//console.log("archives were last: " + JSON.stringify(archives, null, 4));
-		}
+		finalFunction(resp);
 	});
 };
 
-var backuperInst = new Backuper();
+var backuperInst = new Backuper(configs);
 
-backuperInst.startBackups();
+backuperInst.startBackups(function(resp) {
+	if (resp.res === "ok") {
+		backuperInst.remoteBackup();
+	}
+});

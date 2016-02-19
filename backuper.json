@@ -9,6 +9,7 @@
 			"level" : 2
 		}
 	],
+	"outputDir" : "./test/backups/",
 	"sql" : {
 		"credentals" : {
 			"user" : "test",
@@ -17,5 +18,14 @@
 		"dbs" : [
 			"test"
 		]
+	},
+	"aws" : {
+		"aws_access_key_id" : "test",
+		"aws_secret_access_key" : "test",
+		"bucket" : "test"
+	},
+	"remote" : {
+		"aws" : true,
+		"ftp" : false
 	}
 }
