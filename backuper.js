@@ -143,6 +143,49 @@ Dir2Backup.prototype.makeDirsArchive = function(callback) {
 	}
 };
 
+function SqlBackup(params) {
+	this.outputDir = params.outputDir;
+	this.dbs = params.dbs;
+	this.credentals = params.credentals;
+
+	var curDate = new Date();
+
+	this.outputName = "sqldump_" + curDate.toISOString().replace(/T/, '_').replace(/\..+/, '').replace(/\:/g, '_') + ".sql";
+
+}
+
+SqlBackup.prototype.makeDump = function(callback) {
+	var self = this,
+		path = this.outputDir + '/' + this.outputName,
+		args = ["-u", this.credentals.user, "-p" + this.credentals.passwd, "-r", path];
+
+	for (var i in this.dbs) {
+		args.push(this.dbs[i]);
+	}
+
+	var sqlDump = spawn("mysqldump", args);
+
+	sqlDump.stdout.on('data', function(data) {
+		console.log("stdout: " + data);
+	});
+
+	sqlDump.stderr.on('data', function(data) {
+		console.log("stderr: " + data);
+	});
+
+	sqlDump.on('close', function(code) {
+		if (code === 0) {
+			callback({
+				"res" : "ok",
+				"outputDump" : self.outputName
+			});
+		}
+		else {
+			console.log("Smth went wrong at function 'makeArchive'");
+		}
+	});
+};
+
 function Backuper() {
 	this.dirs = [
 		{
@@ -157,14 +200,27 @@ function Backuper() {
 
 	this.mySqlInfo = {
 		"dbs" : [
-			""
+			"test"
 		],
-		"user" : "",
-		"passwd" : ""
+		"user" : "test",
+		"passwd" : "test"
 	};
 
 	this.outputDir = "./test/backups/";
 }
+
+Backuper.prototype.sqlBackups = function(callback) {
+	var sqlInst = new SqlBackup({
+		"outputDir" : this.outputDir,
+		"dbs" : this.mySqlInfo.dbs,
+		"credentals" : {
+			"user" : this.mySqlInfo.user,
+			"passwd" : this.mySqlInfo.passwd
+		}
+	});
+
+	sqlInst.makeDump(callback);
+};
 
 Backuper.prototype.dirsBackup = function(callback) {
 	var dirsCounter = this.dirs.length,
@@ -181,7 +237,6 @@ Backuper.prototype.dirsBackup = function(callback) {
 
 		curDirInstance.makeDirsArchive(function(resp) {
 			if (resp.res === "ok") {
-				//console.log("resp: " + JSON.stringify(resp, null, 4));
 				outputArchives.push(resp.outputArchive);
 				if (--dirsCounter === 0) {
 					var curDate = new Date();
@@ -210,8 +265,25 @@ Backuper.prototype.dirsBackup = function(callback) {
 };
 
 Backuper.prototype.startBackups = function() {
+	var numBackups = 2,
+		archives = [];
+
 	this.dirsBackup(function(resp) {
-		console.dir(resp);
+		if (resp.res === "ok") {
+			archives.push(resp.outputArchive);
+		}
+		if (--numBackups === 0) {
+			//console.log("dirs were last: " + JSON.stringify(archives, null, 4));
+		}
+	});
+
+	this.sqlBackups(function(resp) {
+		if (resp.res === "ok") {
+			archives.push(resp.outputDump);
+		}
+		if (--numBackups === 0) {
+			//console.log("archives were last: " + JSON.stringify(archives, null, 4));
+		}
 	});
 };
 
