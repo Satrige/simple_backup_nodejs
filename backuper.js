@@ -1,6 +1,6 @@
 var fs = require('fs'),
 	spawn = require('child_process').spawn,
-	configs = require("./backuper.json");
+	configs = {};
 
 /*-------------------Common Functions---------------*/
 function getLastDir(name) {
@@ -321,23 +321,46 @@ Backuper.prototype.dirsBackup = function(callback) {
 		curDirInstance.makeDirsArchive(function(resp) {
 			if (resp.res === "ok") {
 				outputArchives.push(resp.outputArchive);
+				//No need to compress single file, just rename it
 				if (--dirsCounter === 0) {
 					var curDate = new Date();
-					makeArchive({
-						"inputDir" : '',
-						"inputFiles" : outputArchives,
-						"outputDir" : self.outputDir,
-						"outputFile" : "files_" + curDate.toISOString().replace(/T/, '_').replace(/\..+/, '').replace(/\:/g, '_')
-					}, function(answ) {
-						callback(answ);
-						if (answ.res === "ok") {
-							for (var j in outputArchives) {
-								fs.unlink(outputArchives[j], function(err) {
-									err && console.log(err);
+					if (outputArchives.length === 1) {
+						var curArchiveName = outputArchives[0];
+						var newName = "files_" + curDate.toISOString().replace(/T/, '_').replace(/\..+/, '').replace(/\:/g, '_') + ".tar.gz";
+						fs.rename(curArchiveName, self.outputDir + '/' + newName, function(err) {
+							if (err) {
+								console.dir(err);
+								callback({
+									"res" : "err",
+									"descr" : err.message
 								});
 							}
-						}
-					});
+							else {
+								callback({
+									"res" : "ok",
+									"outputArchive" : newName
+								});
+							}
+						});
+					}
+					//Need to archive all packs into one
+					else {
+						makeArchive({
+							"inputDir" : '',
+							"inputFiles" : outputArchives,
+							"outputDir" : self.outputDir,
+							"outputFile" : "files_" + curDate.toISOString().replace(/T/, '_').replace(/\..+/, '').replace(/\:/g, '_')
+						}, function(answ) {
+							callback(answ);
+							if (answ.res === "ok") {
+								for (var j in outputArchives) {
+									fs.unlink(outputArchives[j], function(err) {
+										err && console.log(err);
+									});
+								}
+							}
+						});
+					}
 				}
 			}
 			else {
@@ -408,10 +431,25 @@ Backuper.prototype.startBackups = function(callback) {
 	});
 };
 
-var backuperInst = new Backuper(configs);
-
-backuperInst.startBackups(function(resp) {
-	if (resp.res === "ok") {
-		backuperInst.remoteBackup();
+(function main() {
+	var argc = process.argv.length;
+	if (argc !== 3) {
+		console.log("Wrong number of args. Must be 1.");
 	}
-});
+	else {
+		var confPath = process.argv[2];
+		try {
+			configs = require(confPath);
+
+			var backuperInst = new Backuper(configs);
+			backuperInst.startBackups(function(resp) {
+				if (resp.res === "ok") {
+					backuperInst.remoteBackup();
+				}
+			});
+		}
+		catch (err) {
+			console.log("Could'nt open config file '" + confPath + "' : " + err.message);
+		}
+	}
+})();
