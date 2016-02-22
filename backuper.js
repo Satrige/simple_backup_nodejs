@@ -150,13 +150,14 @@ function Dir2Backup(params) {
 	this.subFiles = (this.level === 1) ? fs.readdirSync(this.inputDir) : [];
 }
 
+//TODO Create directories for single file to be compressed
 Dir2Backup.prototype.deepArchive = function(callback) {
 	var dirsCounter = this.subFiles.length,
 		self = this;
 
 	for (var i in this.subFiles) {
 		makeArchive({
-			"inputDir" : this.inputDir,
+			"inputDir" : this.inputDir + '/',
 			"inputFiles" : [this.subFiles[i]],
 			"outputDir" : this.outputDir,
 			"outputFile" : this.subFiles[i]
@@ -233,7 +234,6 @@ function SqlBackup(params) {
 	var curDate = new Date();
 
 	this.outputName = "sqldump_" + curDate.toISOString().replace(/T/, '_').replace(/\..+/, '').replace(/\:/g, '_') + ".sql";
-
 }
 
 SqlBackup.prototype.makeDump = function(callback) {
@@ -258,13 +258,20 @@ SqlBackup.prototype.makeDump = function(callback) {
 	//TODO add tar compression
 	sqlDump.on('close', function(code) {
 		if (code === 0) {
-			callback({
-				"res" : "ok",
-				"outputArchive" : self.outputName
+			makeArchive({
+				"inputDir" : '',
+				"inputFiles" : [self.outputDir + self.outputName],
+				"outputDir" : self.outputDir,
+				"outputFile" : "files_" + self.outputName
+			}, function(answ) {
+				fs.unlink(self.outputDir + self.outputName, function(err) {
+					err && console.log(err);
+				});
+				callback(answ);
 			});
 		}
 		else {
-			console.log("Smth went wrong at function 'makeArchive'");
+			console.log("Smth went wrong at function 'makeDump'");
 		}
 	});
 };
@@ -296,16 +303,39 @@ function Backuper(configs) {
 }
 
 Backuper.prototype.sqlBackups = function(callback) {
-	var sqlInst = new SqlBackup({
-		"outputDir" : this.outputDir,
-		"dbs" : this.mySqlInfo.dbs,
-		"credentals" : {
-			"user" : this.mySqlInfo.user,
-			"passwd" : this.mySqlInfo.passwd
+	var self = this,
+		sqlInst = new SqlBackup({
+			"outputDir" : this.outputDir + this.tmpDir + '/',
+			"dbs" : this.mySqlInfo.dbs,
+			"credentals" : {
+				"user" : this.mySqlInfo.user,
+				"passwd" : this.mySqlInfo.passwd
+			}
+		});
+
+	sqlInst.makeDump(function(resp) {
+		if (resp.res === "ok") {
+			fs.rename(self.outputDir + '/' + self.tmpDir + '/' +resp.outputArchive, self.outputDir + '/' + resp.outputArchive, function(err) {
+				if (err) {
+					console.dir(err);
+					callback({
+						"res" : "err",
+						"descr" : err.message
+					});
+				}
+				else {
+					callback({
+						"res" : "ok",
+						"outputArchive" : resp.outputArchive
+					});
+				}
+			});
+
+		}
+		else {
+			callback(resp);
 		}
 	});
-
-	sqlInst.makeDump(callback);
 };
 
 Backuper.prototype.dirsBackup = function(callback) {
@@ -338,15 +368,6 @@ Backuper.prototype.dirsBackup = function(callback) {
 								});
 							}
 							else {
-
-								fs.rmdir(self.outputDir + '/' + self.tmpDir, function(err) {
-									if (err) {
-										console.log(err);
-									}
-									else {
-										console.log("Tmp directory was removed.");
-									}
-								});
 								callback({
 									"res" : "ok",
 									"outputArchive" : newName
@@ -363,21 +384,12 @@ Backuper.prototype.dirsBackup = function(callback) {
 							"outputFile" : "files_" + curDate.toISOString().replace(/T/, '_').replace(/\..+/, '').replace(/\:/g, '_')
 						}, function(answ) {
 							callback(answ);
-							if (answ.res === "ok") {
-								fs.rmdir(self.outputDir + '/' + self.tmpDir, function(err) {
-									if (err) {
-										console.log(err);
-									}
-									else {
-										console.log("Tmp directory was removed.");
-									}
-								});
-							}
 						});
 					}
 				}
 			}
 			else {
+				callback(resp);
 				console.log("Smth went wrong");
 			}
 		});
@@ -430,6 +442,14 @@ Backuper.prototype.startBackups = function(callback) {
 		}
 		if (--numBackups === 0) {
 			console.log("Archives were saved: " + JSON.stringify(self.archives, null, 4));
+			fs.rmdir(self.outputDir + '/' + self.tmpDir, function(err) {
+				if (err) {
+					console.log(err);
+				}
+				else {
+					console.log("Tmp directory was removed.");
+				}
+			});
 			callback({
 				"res" : "ok"
 			});
