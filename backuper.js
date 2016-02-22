@@ -141,11 +141,9 @@ var Remotes = {
 /*--------------------------------------------------*/
 
 function Dir2Backup(params) {
-	var inputDir = params.inputDir,
-		outputDir = params.outputDir;
-
-	this.inputDir = inputDir;
-	this.outputDir = outputDir;
+	
+	this.inputDir = params.inputDir;
+	this.outputDir = params.outputDir;
 	this.outputArchives = [];
 	this.level = params.level || 1;
 
@@ -290,6 +288,11 @@ function Backuper(configs) {
 	];
 
 	this.remoteMethods = configs.remote;
+
+	var curDate = new Date();
+	this.tmpDir = "tmp_" + curDate.toISOString().replace(/T/, '_').replace(/\..+/, '').replace(/\:/g, '_');
+
+	fs.mkdirSync(this.outputDir + '/' + this.tmpDir);
 }
 
 Backuper.prototype.sqlBackups = function(callback) {
@@ -313,10 +316,9 @@ Backuper.prototype.dirsBackup = function(callback) {
 	for (var i in this.dirs) {
 		var curDirInstance = new Dir2Backup({
 			"inputDir" : this.dirs[i].path,
-			"outputDir" : this.outputDir,
+			"outputDir" : this.outputDir + this.tmpDir + '/',
 			"level" : this.dirs[i].level
 		});
-
 
 		curDirInstance.makeDirsArchive(function(resp) {
 			if (resp.res === "ok") {
@@ -336,6 +338,15 @@ Backuper.prototype.dirsBackup = function(callback) {
 								});
 							}
 							else {
+
+								fs.rmdir(self.outputDir + '/' + self.tmpDir, function(err) {
+									if (err) {
+										console.log(err);
+									}
+									else {
+										console.log("Tmp directory was removed.");
+									}
+								});
 								callback({
 									"res" : "ok",
 									"outputArchive" : newName
@@ -353,11 +364,14 @@ Backuper.prototype.dirsBackup = function(callback) {
 						}, function(answ) {
 							callback(answ);
 							if (answ.res === "ok") {
-								for (var j in outputArchives) {
-									fs.unlink(outputArchives[j], function(err) {
-										err && console.log(err);
-									});
-								}
+								fs.rmdir(self.outputDir + '/' + self.tmpDir, function(err) {
+									if (err) {
+										console.log(err);
+									}
+									else {
+										console.log("Tmp directory was removed.");
+									}
+								});
 							}
 						});
 					}
@@ -449,7 +463,7 @@ Backuper.prototype.startBackups = function(callback) {
 			});
 		}
 		catch (err) {
-			console.log("Could'nt open config file '" + confPath + "' : " + err.message);
+			console.log("Error: " + err.message);
 		}
 	}
 })();
