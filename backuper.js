@@ -9,7 +9,7 @@ function getLastDir(name) {
 	if (splittedDirs[splittedDirs.length - 1] !== '') {
 		return splittedDirs[splittedDirs.length - 1];
 	}
-	else if (splittedDirs.length > 1){
+	else if (splittedDirs.length > 1) {
 		return splittedDirs[splittedDirs.length - 2];
 	}
 	else {
@@ -23,7 +23,7 @@ function makeArchive(params, callback) {
 		outputDir = params.outputDir,
 		outputFile = params.outputFile;
 
-	var ouputName = outputDir +  outputFile + '.tar.gz',	
+	var ouputName = outputDir +  outputFile + '.tar.gz',
 		args = ["-zcf", ouputName];
 
 	for (var i in inputFiles) {
@@ -41,7 +41,7 @@ function makeArchive(params, callback) {
 	});
 
 	archive.stderr.on('data', function(data) {
-		//console.log("stderr: " + data);
+		console.log("stderr: " + data);
 	});
 
 	archive.on('close', function(code) {
@@ -53,9 +53,29 @@ function makeArchive(params, callback) {
 			});
 		}
 		else {
+			console.log("child process exited with code: " + code + ' err: ' + JSON.stringify(args, null, 4));
 			console.log("Smth went wrong at function 'makeArchive'");
 		}
 	});
+}
+/**
+ * @params
+ * @params.curDir {String} - might be empty
+ * @params.files {Array}
+ */
+function deleteFiles(params) {
+	var curDir = params.curDir || '',
+		files = params.files;
+
+	if (curDir !== '') {
+		curDir += '/';
+	}
+
+	for (var j in files) {
+		fs.unlink(curDir + files[j], function(err) {
+			err && console.log(err);
+		});
+	}
 }
 
 /*-------------------Remote Block-------------------*/
@@ -145,9 +165,9 @@ function Dir2Backup(params) {
 	this.inputDir = params.inputDir;
 	this.outputDir = params.outputDir;
 	this.outputArchives = [];
-	this.level = params.level || 1;
+	this.level = params.level || "firstLevel";
 
-	this.subFiles = (this.level === 1) ? fs.readdirSync(this.inputDir) : [];
+	this.subFiles = (this.level === "deep") ? fs.readdirSync(this.inputDir) : [];
 }
 
 //TODO Create directories for single file to be compressed
@@ -177,11 +197,10 @@ Dir2Backup.prototype.deepArchive = function(callback) {
 								"res" : "ok",
 								"outputArchive" : self.outputDir + '/' + wholeResp.outputArchive
 							});
-							for (var j in self.outputArchives) {
-								fs.unlink(self.outputDir + '/' + self.outputArchives[j], function(err) {
-									err && console.log(err);
-								});
-							}
+							deleteFiles({
+								"curDir" : self.outputDir,
+								"files" : self.outputArchives
+							});
 						}
 						else {
 							callback(wholeResp);
@@ -218,7 +237,7 @@ Dir2Backup.prototype.firstLevelArchive = function(callback) {
 };
 
 Dir2Backup.prototype.makeDirsArchive = function(callback) {
-	if (this.level === 1) {
+	if (this.level === "deep") {
 		this.deepArchive(callback);
 	}
 	else {
