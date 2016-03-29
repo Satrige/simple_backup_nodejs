@@ -78,53 +78,73 @@ function deleteFiles(params) {
 	}
 }
 
+function deleteFolderRecursive(path) {
+    if (fs.existsSync(path)) {
+        fs.readdirSync(path).forEach(function(file, index) {
+            var curPath = path + "/" + file;
+
+            if (fs.lstatSync(curPath).isDirectory()) {
+                deleteFolderRecursive(curPath);
+            } else {
+                fs.unlinkSync(curPath);
+            }
+        });
+        fs.rmdirSync(path);
+    }
+    else {
+    	console.log("There is no file with such name: " + path);
+    }
+};
+
 /*-------------------Remote Block-------------------*/
 
 function AwsBackup(awsConfigs) {
-	this.AWS = require('aws-sdk');
-	this.AWS.config.update({
-		"accessKeyId" : awsConfigs.aws_access_key_id,
-		"secretAccessKey" : awsConfigs.aws_secret_access_key
-	});
+	this.s3 = require('s3');
 	this.bucket = awsConfigs.bucket;
-
-	this.s3 = new this.AWS.S3();
+    this.client = this.s3.createClient({
+        "maxAsyncS3" : 20, 
+        "s3RetryCount" : 3, 
+        "s3RetryDelay" : 1000, 
+        "multipartUploadThreshold" : 20971520,
+        "multipartUploadSize" : 15728640, 
+        "s3Options": {
+            "accessKeyId" : awsConfigs.aws_access_key_id,
+            "secretAccessKey" : awsConfigs.aws_secret_access_key
+        },
+    });
 }
 
 AwsBackup.prototype.backupSingleFile = function(filePath, callback) {
-	var fileStream = fs.createReadStream(filePath),
-		self = this;
+	var self = this,
+    	params = {
+	        "localFile": filePath,
+	        s3Params: {
+	            "Bucket" : self.bucket,
+	            "Key" : getLastDir(filePath)
+	        }
+    };
 
-	fileStream.on('error', function (err) {
-		if (err) {
-			console.log("Error at FileStream: " + err);
-			callback({
-				"res" : "err",
-				"descr" : err
-			});
-		}
-	});
+    var uploader = this.client.uploadFile(params);
 
-    fileStream.on('open', function() {
-        self.s3.putObject({
-            Bucket: self.bucket,
-            Key: getLastDir(filePath),
-            Body: fileStream
-        }, function(err, result) {
-            if (err) {
-            	console.log("Error while putting object to bucket: " + err);
-            	callback({
-					"res" : "err",
-					"descr" : err
-				});
-            }
-            else {
-            	callback({
-            		"res" : "ok",
-            		"descr" : result
-            	});
-            }
-        });
+    uploader.on('error', function(err) {
+        console.error("unable to upload:", err.stack);
+        callback({
+			"res" : "err",
+			"descr" : err
+		});
+    });
+
+    uploader.on('progress', function() {
+        console.log("progress", uploader.progressMd5Amount,
+            uploader.progressAmount, uploader.progressTotal);
+    });
+
+    uploader.on('end', function(result) {
+        console.log("done uploading");
+        callback({
+    		"res" : "ok",
+    		"descr" : result
+    	});
     });
 };
 
@@ -260,8 +280,13 @@ SqlBackup.prototype.makeDump = function(callback) {
 		path = this.outputDir + '/' + this.outputName,
 		args = ["-u", this.credentals.user, "-p" + this.credentals.passwd, "-r", path];
 
-	for (var i in this.dbs) {
-		args.push(this.dbs[i]);
+	if (this.dbs === "all") {
+		args.push("--all-databases");
+	}
+	else {
+		for (var i in this.dbs) {
+			args.push(this.dbs[i]);
+		}
 	}
 
 	var sqlDump = spawn("mysqldump", args);
@@ -360,7 +385,8 @@ Backuper.prototype.sqlBackups = function(callback) {
 Backuper.prototype.dirsBackup = function(callback) {
 	var dirsCounter = this.dirs.length,
 		outputArchives = [],
-		self = this;
+		self = this,
+		curDate = new Date();
 
 	for (var i in this.dirs) {
 		var curDirInstance = new Dir2Backup({
@@ -374,7 +400,6 @@ Backuper.prototype.dirsBackup = function(callback) {
 				outputArchives.push(resp.outputArchive);
 				//No need to compress single file, just rename it
 				if (--dirsCounter === 0) {
-					var curDate = new Date();
 					if (outputArchives.length === 1) {
 						var curArchiveName = outputArchives[0];
 						var newName = "files_" + curDate.toISOString().replace(/T/, '_').replace(/\..+/, '').replace(/\:/g, '_') + ".tar.gz";
@@ -461,14 +486,7 @@ Backuper.prototype.startBackups = function(callback) {
 		}
 		if (--numBackups === 0) {
 			console.log("Archives were saved: " + JSON.stringify(self.archives, null, 4));
-			fs.rmdir(self.outputDir + '/' + self.tmpDir, function(err) {
-				if (err) {
-					console.log(err);
-				}
-				else {
-					console.log("Tmp directory was removed.");
-				}
-			});
+			deleteFolderRecursive(self.outputDir + '/' + self.tmpDir);
 			callback({
 				"res" : "ok"
 			});
