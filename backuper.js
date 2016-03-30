@@ -410,6 +410,11 @@ function Backuper(configs) {
 	this.tmpDir = "tmp_" + curDate.toISOString().replace(/T/, '_').replace(/\..+/, '').replace(/\:/g, '_');
 
 	fs.mkdirSync(this.outputDir + '/' + this.tmpDir);
+
+	if (configs.purge && configs.purge.need === true) {
+		this.purge = true;
+		this.purgePeriod = configs.purge.days * 24 * 60 * 60 * 1000;
+	}
 }
 
 Backuper.prototype.dbBackups = function(type, callback) {
@@ -555,6 +560,35 @@ Backuper.prototype.remoteBackup = function() {
 	})(0);
 }
 
+Backuper.prototype.startPurge = function(callback) {
+	var oldDumps = fs.readdirSync(this.outputDir),
+		nowDate = new Date().getTime(),
+		filesForDelete = [];
+
+	for (var i = 0; i < oldDumps.length; ++i) {
+		var filePath = this.outputDir + '/' + oldDumps[i],
+			createdDateStr = fs.statSync(filePath).birthtime,
+			createdDate = new Date(createdDateStr).getTime();
+		if ((nowDate - createdDate) >= this.purgePeriod) {
+			console.log("Need to delete: " + filePath);
+			filesForDelete.push(filePath);
+		}
+		else {
+			console.log("No need to delete: " + filePath);
+		}
+	}
+
+	if (filesForDelete.length > 0) {
+		deleteFiles({
+			"files" : filesForDelete
+		});
+	}
+	
+	callback && callback({
+		"res" : "ok"
+	});
+};
+
 Backuper.prototype.startBackups = function(callback) {
 	var numBackups = 3,
 		self = this;
@@ -566,9 +600,15 @@ Backuper.prototype.startBackups = function(callback) {
 		if (--numBackups === 0) {
 			console.log("Archives were saved: " + JSON.stringify(self.archives, null, 4));
 			deleteFolderRecursive(self.outputDir + '/' + self.tmpDir);
-			callback({
-				"res" : "ok"
-			});
+
+			if (this.purge) {
+				this.startPurge(callback);
+			}
+			else {
+				callback({
+					"res" : "ok"
+				});
+			}
 		}
 	};
 
